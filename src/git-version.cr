@@ -88,17 +88,18 @@ module GitVersion
     end
 
     def get_commits_since(tag : String | Nil)
-      if !tag.nil? && (exec "git tag -l #{tag}").any?
-        last_commit = (exec "git show-ref -s #{tag}")[0]
-        return (exec "git log --pretty=%B #{last_commit}..HEAD #{log_paths_filter}")
-      else
-        return (exec "git log --pretty=%B")
-      end
+      commits = if !tag.nil? && (exec "git tag -l #{tag}").any?
+                  last_commit = (exec "git show-ref -s #{tag}")[0]
+                  exec "git log --pretty=%B #{last_commit}..HEAD #{log_paths_filter}"
+                else
+                  exec "git log --pretty=%B"
+                end
+      commits.reverse!
     rescue
       return [] of String
     end
 
-    def get_previous_tag_and_version: Tuple(String | Nil, SemanticVersion)
+    def get_previous_tag_and_version : Tuple(String | Nil, SemanticVersion)
       cb = current_branch_or_tag
 
       branch_tags = tags_by_branch(cb)
@@ -126,7 +127,7 @@ module GitVersion
       return {previous_tag, previous_version}
     end
 
-    def get_previous_version: String
+    def get_previous_version : String
       lt, lv = get_previous_tag_and_version
       return lt ? lt : add_prefix(lv.to_s)
     end
@@ -147,10 +148,10 @@ module GitVersion
       get_commits_since(previous_tag).each do |c|
         commit = c.downcase
         match = if @major_id_is_regex
-          /#{@major_identifier}/.match(commit)
-        else
-          commit.includes?(@major_identifier)
-        end
+                  /#{@major_identifier}/.match(commit)
+                else
+                  commit.includes?(@major_identifier)
+                end
         if match
           previous_version =
             SemanticVersion.new(
@@ -166,26 +167,34 @@ module GitVersion
       end
 
       if !major
-        get_commits_since(previous_tag).each do |c|
+        commits = get_commits_since(previous_tag)
+        commits.each do |c|
           commit = c.downcase
           match = if @minor_id_is_regex
-            /#{@minor_identifier}/.match(commit)
-          else
-            commit.includes?(@minor_identifier)
-          end
+                    /#{@minor_identifier}/i.match(commit) # i flag for case-insensitive
+                  else
+                    commit.includes?(@minor_identifier.downcase) # downcase to match case
+                  end
           if match
-            previous_version =
-              SemanticVersion.new(
-                previous_version.major,
-                previous_version.minor + 1,
-                0,
-                previous_version.prerelease,
-                previous_version.build,
-              )
-            break
+            previous_version = SemanticVersion.new(
+              previous_version.major,
+              previous_version.minor + 1,
+              0,
+              previous_version.prerelease,
+              previous_version.build
+            )
+          else
+            previous_version = SemanticVersion.new(
+              previous_version.major,
+              previous_version.minor,
+              previous_version.patch + 1,
+              previous_version.prerelease,
+              previous_version.build
+            )
           end
         end
       end
+      
 
       cb = current_branch_or_tag
 
@@ -202,7 +211,7 @@ module GitVersion
             nil
           )
       else
-        branch_sanitized_name = cb.downcase.gsub(/[^a-zA-Z0-9]/, "")[0,30]
+        branch_sanitized_name = cb.downcase.gsub(/[^a-zA-Z0-9]/, "")[0, 30]
         prerelease = [branch_sanitized_name, commits_distance(previous_tag), current_commit_hash()] of String | Int32
         previous_version =
           SemanticVersion.new(
